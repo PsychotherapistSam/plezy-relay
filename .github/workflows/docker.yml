@@ -1,0 +1,94 @@
+name: Server Sync
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # every hour
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      - name: Get latest upstream commit for server/
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA=$(gh api "repos/edde746/plezy/commits?path=server&per_page=1" --jq '.[0].sha')
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+
+      - name: Read last built SHA
+        id: last
+        run: |
+          if [ -f .upstream-sha ]; then
+            echo "sha=$(cat .upstream-sha)" >> $GITHUB_OUTPUT
+          else
+            echo "sha=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Skip if unchanged
+        id: check
+        run: |
+          if [ "${{ steps.upstream.outputs.sha }}" = "${{ steps.last.outputs.sha }}" ]; then
+            echo "Upstream server/ unchanged, skipping build."
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Upstream server/ changed: ${{ steps.last.outputs.sha }} -> ${{ steps.upstream.outputs.sha }}"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout upstream server/
+        if: steps.check.outputs.changed == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: edde746/plezy
+          ref: ${{ steps.upstream.outputs.sha }}
+          sparse-checkout: server
+          sparse-checkout-cone-mode: true
+          path: upstream
+
+      - name: Set up QEMU
+        if: steps.check.outputs.changed == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.changed == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: steps.check.outputs.changed == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        if: steps.check.outputs.changed == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./upstream/server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/plezy-relay:latest
+            ghcr.io/${{ github.repository_owner }}/plezy-relay:${{ steps.upstream.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save new SHA
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          echo "${{ steps.upstream.outputs.sha }}" > .upstream-sha
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .upstream-sha
+          git commit -m "chore: built upstream server @ ${{ steps.upstream.outputs.sha }}"
+          git push
