@@ -44,6 +44,30 @@ jobs:
             echo "changed=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Build changelog
+        if: steps.check.outputs.changed == 'true'
+        id: changelog
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OLD_SHA="${{ steps.last.outputs.sha }}"
+          NEW_SHA="${{ steps.upstream.outputs.sha }}"
+          SHORT_NEW="${NEW_SHA:0:7}"
+
+          if [ -z "$OLD_SHA" ]; then
+            printf 'Initial build from upstream commit [`%s`](https://github.com/edde746/plezy/commit/%s)\n' \
+              "$SHORT_NEW" "$NEW_SHA" > /tmp/release-notes.md
+          else
+            SHORT_OLD="${OLD_SHA:0:7}"
+            COMMITS=$(gh api "repos/edde746/plezy/commits?path=server&sha=$NEW_SHA&per_page=50" \
+              --jq --arg old "$OLD_SHA" \
+              '(map(.sha) | index($old) // length) as $idx | .[:$idx] | .[] | "- \(.commit.message | split("\n")[0]) [\(.sha[:7])](https://github.com/edde746/plezy/commit/\(.sha))"')
+            printf '**Upstream changes** ([compare `%s...%s`](https://github.com/edde746/plezy/compare/%s...%s)):\n\n%s\n' \
+              "$SHORT_OLD" "$SHORT_NEW" "$OLD_SHA" "$NEW_SHA" "$COMMITS" > /tmp/release-notes.md
+          fi
+
+          echo "tag=upstream-${NEW_SHA:0:7}" >> $GITHUB_OUTPUT
+
       - name: Checkout upstream server/
         if: steps.check.outputs.changed == 'true'
         uses: actions/checkout@v4
@@ -96,3 +120,12 @@ jobs:
           git add .upstream-sha
           git commit -m "chore: built upstream server @ ${{ steps.upstream.outputs.sha }}"
           git push
+
+      - name: Create release
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.changelog.outputs.tag }}" \
+            --title "Upstream sync ${{ steps.changelog.outputs.tag }}" \
+            --notes-file /tmp/release-notes.md
