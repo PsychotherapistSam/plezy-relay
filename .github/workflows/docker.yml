@@ -127,5 +127,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${{ steps.changelog.outputs.tag }}" \
-            --title "Upstream sync ${{ steps.changelog.outputs.tag }}" \
+            --title "${{ steps.changelog.outputs.tag }}" \
             --notes-file /tmp/release-notes.md
