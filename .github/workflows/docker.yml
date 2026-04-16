@@ -59,8 +59,8 @@ jobs:
               "$SHORT_NEW" "$NEW_SHA" > /tmp/release-notes.md
           else
             SHORT_OLD="${OLD_SHA:0:7}"
-            COMMITS=$(gh api "repos/edde746/plezy/commits?path=server&sha=$NEW_SHA&per_page=50" \
-              --jq --arg old "$OLD_SHA" \
+            COMMITS=$(gh api "repos/edde746/plezy/commits?path=server&sha=$NEW_SHA&per_page=50" | \
+              jq -r --arg old "$OLD_SHA" \
               '(map(.sha) | index($old) // length) as $idx | .[:$idx] | .[] | "- \(.commit.message | split("\n")[0]) [\(.sha[:7])](https://github.com/edde746/plezy/commit/\(.sha))"')
             printf '**Upstream changes** ([compare `%s...%s`](https://github.com/edde746/plezy/compare/%s...%s)):\n\n%s\n' \
               "$SHORT_OLD" "$SHORT_NEW" "$OLD_SHA" "$NEW_SHA" "$COMMITS" > /tmp/release-notes.md
